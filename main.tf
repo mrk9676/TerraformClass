@@ -20,8 +20,6 @@ provider "azurerm" {
   features {}
 }
 
-
-
 resource "azurerm_resource_group" "myrg" {
   name        = "${var.environment}-${var.rg_name}"
   location    = "WestUS"
@@ -48,17 +46,18 @@ name                          = "${var.environment}-${var.kv_name}"
 resource "azurerm_virtual_network" "my_vm_vnet" {
   name                = "${var.environment}-${var.vnet_name}"
   resource_group_name = azurerm_resource_group.myrg.name
-  address_space       = ["192.168.0.0/16"]
+  address_space       = [var.vnet_cidr]
   location            = var.location
 
   depends_on          = [ azurerm_resource_group.myrg ]
 }
 
 resource "azurerm_subnet" "my_subnet" {
-  name                 = "${var.subnetname}"
+  count                = length(var.subnet_names)
+  name                 = var.subnet_names[count.index]
   resource_group_name  = azurerm_resource_group.myrg.name
   virtual_network_name = azurerm_virtual_network.my_vm_vnet.name
-  address_prefixes     = ["192.168.1.0/24"]
+  address_prefixes     = [cidrsubnet(var.vnet_cidr, 8, count.index)]
 
   depends_on          = [ azurerm_virtual_network.my_vm_vnet ]
 }
@@ -70,7 +69,7 @@ resource "azurerm_network_interface" "my_nic" {
 
   ip_configuration {
     name                          = "internal"
-    subnet_id                     = azurerm_subnet.my_subnet.id
+    subnet_id                     = azurerm_subnet.my_subnet[3].id
     private_ip_address_allocation = "Dynamic"
   }
 
@@ -98,4 +97,24 @@ resource "azurerm_linux_virtual_machine" "mytfvm" {
    size                   = "Standard_B1s"
 
    depends_on             = [ azurerm_network_interface.my_nic ]
+}
+
+
+resource "azurerm_storage_account" "my_tf_storage_account" {
+  name                = var.environment == "dv" ? "ramdv22052024" : "ramprod22052024"
+  resource_group_name = azurerm_resource_group.myrg.name
+  location            = var.location
+  account_kind        = "StorageV2"
+  account_tier        = "Standard"
+  account_replication_type = "LRS"
+  cross_tenant_replication_enabled = false
+  access_tier         = "Hot"
+}
+
+
+resource "azurerm_storage_container" "example" {
+  for_each              = var.storage_containers
+  name                  = replace(lower(each.value.name), "-", "")
+  storage_account_name  = azurerm_storage_account.my_tf_storage_account.name
+  container_access_type = each.value.container_access_type
 }
